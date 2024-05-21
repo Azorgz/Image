@@ -1,3 +1,8 @@
+import numpy as np
+import torch
+from PIL.Image import Image
+
+
 def find_class(args, class_name):
     arg = {}
     for a in args:
@@ -65,33 +70,51 @@ def find_best_grid(param):
 
 
 def CHECK_IMAGE_SHAPE(im):
-    im = im.squeeze()
+    """
+    Return the position of each channel in this order b, c, h, w
+    :param im: image to check
+    :return: channels order
+    """
+    im0 = im.squeeze()
     b, c, h, w = 0, 0, 0, 0
-    if len(im.shape) > 4:
+
+    if len(im0.shape) > 4:
         raise ValueError("Image must be 2D or 3D")
-    elif len(im.shape) == 4:
+
+    elif len(im0.shape) == 4:
+        b = 1
         # Batch of images
-        b = im.shape[0]
-        im = im[0]
-    elif len(im.shape) == 3:
+        im0 = im0[0]
+
+    if len(im0.shape) == 3:
         # Color image or batch of monochrome images
-        a, b, c = im.shape
-        if a == 3:
+        c, h, w = im0.shape
+        if c == 3:
             # Channel first
-            b, c, h, w = 1, a, b, c
-        elif c == 3:
+            c, h, w = 0 + b, 1 + b, 2 + b
+        elif w == 3:
             # Channel last
-            b, c, h, w = 1, c, a, b
-        elif a == 4:
-            # Channel first, alpha coeff
-            b, c, h, w = 1, a, b, c
+            c, h, w = 1 + b, 2 + b, 0 + b
         elif c == 4:
+            # Channel first, alpha coeff
+            c, h, w = 0 + b, 1 + b, 2 + b
+        elif w == 4:
             # Channel last, alpha coeff
-            b, c, h, w = 1, c, a, b
+            c, h, w = 1 + b, 2 + b, 0 + b
         else:
             # batch of monochrome images
-            b, c, h, w = a, 1, b, c
-    elif len(im.shape) == 2:
+            c, h, w = -1, 1, 2
+
+    elif len(im0.shape) == 2:
         # Monochrome image
-        b, c, h, w = a, 1, b, c
+        b, c, h, w = -1, -1, 0, 1
+
+    while len(im.shape) < 4:
+        im = im.unsqueeze(-1)
+    if isinstance(im, np.ndarray):
+        im = np.transpose([b, c, h, w])
+    elif isinstance(im, Image):
+        im = np.transpose([b, c, h, w])
+    elif isinstance(im, torch.Tensor):
+        im = im.permute([b, c, h, w])
     return im

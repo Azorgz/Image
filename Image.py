@@ -14,7 +14,7 @@ from torch import Tensor
 from torchvision.transforms.functional import to_pil_image
 
 from base import Modality, ColorSpace, Channel
-from utils import pil_to_numpy, update_channel_pos, find_class, find_best_grid, CHECK_IM_SHAPE
+from utils import pil_to_numpy, update_channel_pos, find_class, find_best_grid, CHECK_IM_SHAPE, CHECK_IMAGE_SHAPE
 
 
 class ImageTensor(Tensor):
