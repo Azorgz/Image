@@ -13,9 +13,9 @@ https://github.com/kornia/kornia/blob/main/kornia/image/base.py
 """
 
 dict_modality = {'Any': 0, 'Visible': 1, 'Multimodal': 2}
-mode_list = np.array(['UNKNOWN', 'BINARY', 'GRAY', 'RGB', 'RGBA', 'CMYK', 'LAB', 'HSV'])
+mode_list = np.array(['UNKNOWN', 'BINARY', 'GRAY', 'RGB', 'RGBA', 'CMYK', 'LAB', 'HSV', 'XYZ'])
 mode_dict = {'UNKNOWN': 0, 'BINARY': 1, 'GRAY': 2, 'RGB': 3,
-             'RGBA': 4, 'CMYK': 5, 'LAB': 6, 'HSV': 7}
+             'RGBA': 4, 'CMYK': 5, 'LAB': 6, 'HSV': 7, 'XYZ': 8}
 
 
 @dataclass(frozen=True)
@@ -54,13 +54,14 @@ class ColorSpace(Enum):
     r"""Enum that represents the color space of an image."""
 
     UNKNOWN = 0  # in case of multi band images
-    BINARY = 1  # in case of binary mask images (1, 3, or 4 channel)
+    BINARY = 1  # in case of binary mask images (1, 3, or 4 channel(s))
     GRAY = 2  # in case of grayscale images (1 channel)
-    RGB = 3  # in case of color images (3 channel)
-    RGBA = 4  # in case of color images (4 channel)
-    CMYK = 5  # in case of color images in CMYK mode (4 channel)
-    LAB = 6  # in case of color images in LAB mode (3 channel)
-    HSV = 7  # in case of color images in HSV mode (3 channel)
+    RGB = 3  # in case of color images (3 channels)
+    RGBA = 4  # in case of color images (4 channels)
+    CMYK = 5  # in case of color images in CMYK mode (4 channels)
+    LAB = 6  # in case of color images in LAB mode (3 channels)
+    HSV = 7  # in case of color images in HSV mode (3 channels)
+    XYZ = 8  # in case of color images in XYZ mode (3 channels)
 
 
 @dataclass()
@@ -199,12 +200,10 @@ class ImageLayout:
         cs = self.pixel_format.colorspace
         if cs == 2:  # GRAY
             assert self.channel.num_ch == 1
-        elif cs in [3, 6, 7]:
+        elif cs in [3, 6, 7, 8]:
             assert self.channel.num_ch == 3
         elif cs in [4, 5]:
             assert self.channel.num_ch == 4
-        elif cs == 1:  # Mask image
-            assert self.channel.num_ch in [1, 3, 4]
 
     def _CHECK_DEPTH_VALIDITY(self):
         assert self.pixel_format.bit_depth in [8, 16, 32, 64]
@@ -238,6 +237,12 @@ class ImageLayout:
             self._update_channel_names(kwargs['channel_names'])
         if 'dims' in kwargs:
             self._update_dims(kwargs['dims'])
+        if 'modality' in kwargs:
+            self._update_modality(kwargs['modality'])
+
+    def _update_modality(self, modality):
+        self.modality = Modality(modality)
+        self._CHECK_MODALITY_VALIDITY()
 
     def _update_channel(self, **kwargs):
         self.channel = Channel(**kwargs)

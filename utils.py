@@ -1,3 +1,5 @@
+from typing import Union
+
 import numpy as np
 import torch
 import PIL.Image
@@ -72,7 +74,7 @@ def find_best_grid(param):
     return srt, srt + i
 
 
-def CHECK_LAYOUT(valid:bool, inp: Tensor, image_size:ImageSize, channel:Channel, batch:Batch, layout:ImageLayout):
+def CHECK_LAYOUT(valid: bool, inp: Tensor, image_size: ImageSize, channel: Channel, batch: Batch, layout: ImageLayout):
     assert valid, 'Shape is not valid'
     assert image_size == layout.image_size, 'The size of the given tensor doesnt match the size of the given Layout'
     assert channel == layout.channel, 'The number and position of channels of the given Tensor doesnt match the Layout'
@@ -80,7 +82,7 @@ def CHECK_LAYOUT(valid:bool, inp: Tensor, image_size:ImageSize, channel:Channel,
     return True
 
 
-def CHECK_IMAGE_SHAPE(im: np.ndarray | Tensor | PIL.Image.Image):
+def CHECK_IMAGE_SHAPE(im: Union[np.ndarray, Tensor, PIL.Image.Image]):
     """
     Return first a boolean to indicate whether the image shape is valid or not
     Return the image with channels at the right positions,
@@ -198,8 +200,3 @@ def CHECK_IMAGE_FORMAT(im, colorspace):
         else:
             modality = 2
     return im, PixelFormat(colorspace, bit_depth), Modality(modality)
-
-
-
-
-

@@ -1,11 +1,14 @@
+import os
+
 import torch
-from colormaps import *
+# from colormaps import *
 from Image import ImageTensor
 
-vis = ImageTensor("/home/godeta/PycharmProjects/Image/vis.png")
+vis = ImageTensor(os.getcwd() + "/vis.png")
+vis = ImageTensor.rand(2, 3)
 # vis.show()
-vis2 = vis.HSV()
-vis2 = vis2.RGB()
-vis.show()
+vis2 = vis.GRAY()
+# vis = vis2.LAB()
+# vis.show()
 vis2.show()
 # RGBA = RGBA_to_GRAY()
