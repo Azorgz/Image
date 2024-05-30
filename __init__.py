@@ -6,3 +6,4 @@ __all__ = ['ImageTensor', 'DepthTensor']
 
 # Version variable
 __version__ = "1.0"
+__author__ = 'Aurelien Godet'
