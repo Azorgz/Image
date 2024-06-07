@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from .Image import ImageTensor, DepthTensor
 
 __all__ = ['ImageTensor', 'DepthTensor']

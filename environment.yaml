@@ -1,0 +1,17 @@
+name: Image
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11.9
+  - pillow
+  - pip
+  - pip:
+      - setuptools
+      - matplotlib
+      - numpy==1.26.4
+      - opencv-python==4.9.0.80
+      - torch
+      - torchaudio
+      - torchvision

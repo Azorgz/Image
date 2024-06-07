@@ -5,7 +5,7 @@ import torch
 import PIL.Image
 from PIL import Image
 from torch import Tensor
-from base import ImageSize, Channel, ColorSpace, PixelFormat, Modality, Batch, ImageLayout
+from .base import ImageSize, Channel, ColorSpace, PixelFormat, Modality, Batch, ImageLayout, Dims
 
 
 def time_fct(func, reps=1, exclude_first=False):
@@ -20,13 +20,16 @@ def time_fct(func, reps=1, exclude_first=False):
         timed = time.time() - start
         print("------------------------------------ TIME FUNCTION ---------------------------------------------")
         try:
-            print(f"Function {func.__name__} executed  {reps} times in : {timed} seconds, average = {timed/reps} seconds"
-                  f"{f', first occurence : {first}' if exclude_first else ''}")
+            print(
+                f"Function {func.__name__} executed  {reps} times in : {timed} seconds, average = {timed / reps} seconds"
+                f"{f', first occurence : {first}' if exclude_first else ''}")
         except AttributeError:
-            print(f"\nFunction {func.__class__.__name__} executed  {reps} times in : {timed} seconds, average = {timed/reps} seconds"
-                  f"{f', first occurence : {first}' if exclude_first else ''}")
+            print(
+                f"\nFunction {func.__class__.__name__} executed  {reps} times in : {timed} seconds, average = {timed / reps} seconds"
+                f"{f', first occurence : {first}' if exclude_first else ''}")
         print("------------------------------------------------------------------------------------------------")
         return res
+
     return wrapper
 
 
@@ -42,6 +45,7 @@ def wrap_colorspace(wrapper, fct):
         wrapper(im, **kwargs)
         fct(im, **kwargs)
         return im
+
     return wrapper_fct
 
 
@@ -107,11 +111,12 @@ def find_best_grid(param):
     return srt, srt + i
 
 
-def CHECK_IMAGE_SHAPE(im: Union[np.ndarray, Tensor, PIL.Image.Image], batched=False):
+def CHECK_IMAGE_SHAPE(im: Union[np.ndarray, Tensor, PIL.Image.Image], batched=False, permute=False):
     """
     Return first a boolean to indicate whether the image shape is valid or not
     Return the image with channels at the right positions,
     the ImageSize, the Channel and the Batch
+    :param permute: Weither if the image has to be permuted has b -c -h -w or not
     :param batched: to specify if the given Tensor is batched or not
     :param im: image to check
     :return: channels order
@@ -169,22 +174,28 @@ def CHECK_IMAGE_SHAPE(im: Union[np.ndarray, Tensor, PIL.Image.Image], batched=Fa
     im = batched_im.movedim(0, -1).squeeze() if batched else im
     while len(im.shape) < 4:
         im = im.unsqueeze(-1)
-    im = im.permute([b, c, h, w])
+    b, c, h, w = b % 4, c % 4, h % 4, w % 4
+    if permute:
+        im = im.permute(b, c, h, w)
+        dims = Dims()
+    else:
+        dims = Dims(b, c, h, w)
     return (valid,
             im,
-            ImageSize(*im.shape[-2:]),
-            Channel(1, im.shape[1]),
-            Batch(im.shape[0] > 1, im.shape[0]))
+            dims,
+            ImageSize(im.shape[dims.height], im.shape[dims.width]),
+            Channel(dims.channels, im.shape[dims.channels]),
+            Batch(im.shape[dims.batch] > 1, im.shape[dims.batch]))
 
 
-def CHECK_IMAGE_FORMAT(im, colorspace, channel_names=None, scale=True):
+def CHECK_IMAGE_FORMAT(im, colorspace, dims, channel_names=None, scale=True):
     # Depth format
     if im.dtype == torch.uint8:
         bit_depth = 8
         im = im / 1. if scale else im / 255
     elif im.dtype == torch.uint16:
         bit_depth = 16
-    # Promotion not implemented as torch 2.3.0 for uint16, uint32, uint64
+        # Promotion not implemented as torch 2.3.0 for uint16, uint32, uint64
         im = im / (256 ** 2 - 1)
         im = im * (256 ** 2 - 1) if scale else im
     elif im.dtype == torch.float32 or im.dtype == torch.uint32:
@@ -200,7 +211,7 @@ def CHECK_IMAGE_FORMAT(im, colorspace, channel_names=None, scale=True):
         raise NotImplementedError
 
     # Colorspace check
-    c = im.shape[1]
+    c = im.shape[dims.channels]
     if colorspace is None:
         if bit_depth == 1:
             # BINARY MODE, ANY MODALITY
@@ -228,7 +239,7 @@ def CHECK_IMAGE_FORMAT(im, colorspace, channel_names=None, scale=True):
             # UNKNOWN MODE, MULTIMODAL MODALITY
             colorspace = ColorSpace(0)
             modality = 2
-            channel_names = ['Any']*c if channel_names is None else channel_names
+            channel_names = ['Any'] * c if channel_names is None else channel_names
 
     else:
         if bit_depth == 1:

@@ -1,3 +1,4 @@
+import os
 from os.path import basename
 
 import torch
@@ -32,6 +33,8 @@ class Encoder:
         self.depth = depth
 
     def __call__(self, im: Tensor, path, *args, name=None, keep_colorspace=False, **kwargs):
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
         if self.depth == 8 and keep_colorspace:
             if im.colorspace in ['LAB', 'HSV', 'CMYK', 'RGBA']:
                 mode = im.colorspace
@@ -90,7 +93,7 @@ class Decoder:
             elif inp.shape[-1] == 4:
                 self.value = inp[..., [2, 1, 0, 3]]
             else:
-                self.value = np.expand_dims(inp, 1)
+                self.value = inp
         assert self.value is not None
 
 

@@ -15,10 +15,10 @@ from torch import Tensor, _C
 from torch.overrides import get_default_nowrap_functions
 
 # --------- Import local classes -------------------------------- #
-from base import Modality, ImageLayout, dict_modality, mode_list
-from colorspace import colorspace_fct
-from encoder import Encoder, Decoder
-from utils import find_best_grid, CHECK_IMAGE_SHAPE, CHECK_IMAGE_FORMAT, in_place_fct, find_class
+from .base import Modality, ImageLayout, dict_modality, mode_list
+from .colorspace import colorspace_fct
+from .encoder import Encoder, Decoder
+from .utils import find_best_grid, CHECK_IMAGE_SHAPE, CHECK_IMAGE_FORMAT, in_place_fct, find_class
 
 matplotlib.use('TkAgg')
 
@@ -63,29 +63,41 @@ class ImageTensor(Tensor):
                 colorspace: str = None,
                 channel_names=None,
                 batched=False,
+                permute_image=False,
+                normalize=True,
                 **kwargs):
         # Input array is a path to an image OR an already formed ndarray instance
         if isinstance(inp, str):
             name = basename(inp).split('.')[0] if name is None else name
             d = Decoder(inp)
             inp, batched = d.value, d.batched
-        if isinstance(inp, ImageTensor):
+            permute_image = True  # The image has been created from a path
+        if isinstance(inp, ImageTensor) or isinstance(inp, DepthTensor):
             inp_ = inp.to_tensor()
             image_layout = inp.image_layout.clone()
             name = str(inp.name)
         elif isinstance(inp, np.ndarray) or isinstance(inp, Tensor):
-            valid, inp_, image_size, channel, batch = CHECK_IMAGE_SHAPE(inp, batched)
+            valid, inp_, dims, image_size, channel, batch = CHECK_IMAGE_SHAPE(inp, batched, permute_image)
             if colorspace is not None:
                 colorspace = int(np.argwhere(mode_list == colorspace)[0][0])
-            inp_, pixelformat, mod, channel_names = CHECK_IMAGE_FORMAT(inp_, colorspace, channel_names=channel_names)
+            inp_, pixelformat, mod, channel_names = CHECK_IMAGE_FORMAT(inp_, colorspace, dims,
+                                                                       channel_names=channel_names)
             modality = mod if modality is None else Modality(dict_modality[modality])
-            image_layout = ImageLayout(modality, image_size, channel, pixelformat, batch,
+            image_layout = ImageLayout(modality, image_size, channel, pixelformat, batch, dims,
                                        channel_names=channel_names)
         else:
             raise NotImplementedError
 
         if isinstance(device, torch.device):
             inp_ = inp_.to(device)
+        if normalize and inp_.max() > 1:
+            if image_layout.pixel_format.bit_depth == 8:
+                inp_ /= 255
+            elif image_layout.pixel_format.bit_depth == 16:
+                inp_ /= 65535
+            else:
+                inp_ = (inp_ - inp_.min()) / (inp_.max() - inp_.min())
+
         image = super().__new__(cls, inp_)
         # add the new attributes to the created instance of Image
         image._image_layout = image_layout
@@ -109,16 +121,15 @@ class ImageTensor(Tensor):
         dtype = dtype_dict[str(depth)]
         assert channel >= 1 and batch >= 1 and height >= 1 and width >= 1
         return cls(torch.rand([batch, channel, height, width], dtype=dtype),
-                   name='Random Image', batched=batch > 1)
+                   name='Random Image', batched=batch > 1, permute_image=True)
 
     @classmethod
     def randint(cls, batch: int = 1, channel: int = 3, height: int = 100, width: int = 100,
-                depth: int | str = 8, scaled=True, low=0, high=None) -> ImageTensor:
+                depth: int | str = 8, low=0, high=None) -> ImageTensor:
         """
         Instance creation of Random images
         :param high: Upper bound of the created instance
         :param low: Lower bound of the created instance
-        :param scaled: If True the returned ImageTensor will take integer values
         :param batch: batch dimension
         :param channel: channel dimension (1 : Any modality, 3 or 4 : RGB-A, other: Multimodal)
         :param height: height of the ImageTensor
@@ -140,7 +151,7 @@ class ImageTensor(Tensor):
             high_ = 18446744073709551615
         high = min(high, high_) if high is not None else high_
         return cls(torch.randint(low, high, [batch, channel, height, width], dtype=dtype),
-                   name='Random Image', batched=batch > 1)
+                   name='Random Image', batched=batch > 1, permute_image=True, normalize=False)
 
     # ------- utils methods ---------------------------- #
     # ------- Torch function call method ---------------------------- #
@@ -158,11 +169,13 @@ class ImageTensor(Tensor):
             elif res.__class__ is not Tensor:
                 return res
             else:
-                arg = find_class(args, ImageTensor)
+                arg = find_class(args, cls)
                 if arg is not None:
                     if arg.shape == res.shape:
-                        arg.data = res
-                        return arg
+                        new = cls(res)
+                        new.name = arg.name
+                        new.permute(arg.layers_name, in_place=True)
+                        return new
                     else:
                         return res
                 else:
@@ -185,7 +198,7 @@ class ImageTensor(Tensor):
         :param image: ImageTensor to clone
         :return: cloned ImageTensor
         """
-        new = self.__class__(self)
+        new = self.__class__(self, normalize=False)
         return new
 
     def to(self, dst, *args, in_place=False, **kwargs):
@@ -194,19 +207,61 @@ class ImageTensor(Tensor):
         return out
 
     # ------- basic methods ---------------------------- #
-    def __eq__(self, other):
-        if isinstance(other, ImageTensor):
-            eq = True
-            if torch.sum(Tensor(self.data) - Tensor(other.data)) != 0:
-                eq = False
-            elif self.image_layout != other.image_layout:
-                eq = False
-            return eq
-        else:
-            return Tensor(self.data) == other
+    # def __eq__(self, other):
+    #     if isinstance(other, ImageTensor):
+    #         eq = True
+    #         if torch.sum(Tensor(self.data) - Tensor(other.data)) != 0:
+    #             eq = False
+    #         elif self.image_layout != other.image_layout:
+    #             eq = False
+    #         return eq
+    #     else:
+    #         return Tensor(self.data) == other
 
     def __str__(self):
         return str(self.to_tensor())
+
+    def __lt__(self, other):
+        return self.BINARY(other, method='lt')
+
+    def __le__(self, other):
+        return self.BINARY(other, method='le')
+
+    def __eq__(self, other):
+        return self.BINARY(other, method='eq')
+
+    def __ne__(self, other):
+        return self.BINARY(other, method='ne')
+
+    def __ge__(self, other):
+        return self.BINARY(other, method='ge')
+
+    def __gt__(self, other):
+        return self.BINARY(other, method='gt')
+
+    def __mul__(self, other):
+        out = self.clone()
+        with _C.DisableTorchFunctionSubclass():
+            out.data = torch.mul(self, other)
+        return out
+
+    def __add__(self, other):
+        out = self.clone()
+        with _C.DisableTorchFunctionSubclass():
+            out.data = torch.add(self, other)
+        return out
+
+    def __div__(self, other):
+        out = self.clone()
+        with _C.DisableTorchFunctionSubclass():
+            out.data = torch.div(self, other)
+        return out
+
+    def __sub__(self, other):
+        out = self.clone()
+        with _C.DisableTorchFunctionSubclass():
+            out.data = torch.sub(self, other)
+        return out
 
     def pprint(self):
         print(self.image_layout)
@@ -238,6 +293,46 @@ class ImageTensor(Tensor):
         out = in_place_fct(self, in_place)
         out.data = torch.concatenate([self.to_tensor(), *images], dim=0)
         out.batch_size = batch
+        if not in_place:
+            return out
+
+    def stack(self, *args, dim: int | str = 0, in_place: bool = False):
+        """
+        Function to stack ImageTensor together. It's a redirection of other stacking fct in order to preserve the
+        dimensions of the initial ImageTensor
+        :param in_place: bool wether to create a new instance or not
+        :param iter_tensor: list of ImageTensor to stack
+        :param dim: dimension along which to stack
+        :return: stacked ImageTensor
+        """
+        # if the list to stack is within self:
+        if isinstance(self, list):
+            out = in_place_fct(self[0], in_place)
+            if len(self) == 1:
+                return self[0]
+            else:
+                iter_tensor = [*self[1:]]
+        elif len(args) > 0:
+            out = in_place_fct(self, in_place)
+            iter_tensor = [*args]
+        else:
+            out = in_place_fct(self, in_place)
+            return out
+        if dim == 'b' or dim == 'batch' or dim == out.image_layout.dims.dims[0]:
+            fct = out.batch
+            out.batch_size = out.batch_size + sum([im.batch_size for im in iter_tensor])
+        elif dim == 'c' or dim == 'channel' or dim == out.image_layout.dims.dims[1]:
+            raise NotImplementedError
+        elif dim == 'h' or dim == 'height' or dim == out.image_layout.dims.dims[2]:
+            fct = out.vstack
+            out.image_size = out.image_size[0] + sum([im.image_size[0] for im in iter_tensor]), self.image_size[1]
+        elif dim == 'w' or dim == 'width' or dim == out.image_layout.dims.dims[3]:
+            fct = out.hstack
+            out.image_size = out.image_size[0], out.image_size[1] + sum([im.image_size[1] for im in iter_tensor])
+        else:
+            raise NotImplementedError
+        out.data = fct(iter_tensor, in_place=False)
+
         if not in_place:
             return out
 
@@ -288,7 +383,9 @@ class ImageTensor(Tensor):
             pad_b = int(math.floor((h - h_ref) / 2))
             pad_tuple = (pad_l, pad_r, pad_t, pad_b)
         # Pad the output and update its layout
-        out.data = F.pad(out.to_tensor(), pad_tuple, value=value, mode=mode, **kwargs)
+
+        data = F.pad(out.to_tensor(), pad_tuple, value=value, mode=mode)
+        out.data = data
         out.permute(layers)
         out.im_pad = (*pad_tuple, mode)
         if not in_place:
@@ -324,7 +421,7 @@ class ImageTensor(Tensor):
 
     def pyrDown(self, in_place=False, **kwargs):
         layers = self.layers_name
-        out = in_place_fct(self, in_place).reset_layers_order().to_tensor()
+        out = in_place_fct(self, in_place).reset_layers_order(in_place=False)
         # downsample
         out.data = F.interpolate(out,
                                  scale_factor=1 / 2,
@@ -338,8 +435,8 @@ class ImageTensor(Tensor):
 
     def pyrUp(self, in_place=False, **kwargs):
         layers = self.layers_name
-        out = in_place_fct(self, in_place).reset_layers_order().to_tensor()
-        # downsample
+        out = in_place_fct(self, in_place).reset_layers_order(in_place=False)
+        # upsample
         out.data = F.interpolate(out,
                                  scale_factor=2,
                                  mode='bilinear',
@@ -352,7 +449,7 @@ class ImageTensor(Tensor):
 
     def resize(self, shape, keep_ratio=False, in_place=False, **kwargs):
         layers = self.layers_name
-        out = in_place_fct(self, in_place).reset_layers_order()
+        out = in_place_fct(self, in_place).reset_layers_order(in_place=False)
         if keep_ratio:
             ratio = torch.tensor(self.image_size) / torch.tensor(shape)
             ratio = ratio.max()
@@ -404,13 +501,11 @@ class ImageTensor(Tensor):
             return out
 
     # -------  Layers manipulation methods  ---------------------------- #
-    def reset_layers_order(self, in_place: bool = True):
-        dims = np.array(self.image_layout.dims.dims)
-        new_dims = [int(np.argwhere(dims == i)) for i in range(len(dims))]
+    def reset_layers_order(self, in_place: bool = False):
         if in_place:
-            self.permute(new_dims, in_place=True)
+            self.permute(self.image_layout.dims.dims, in_place=True)
         else:
-            return self.permute(new_dims, in_place=False)
+            return self.permute(self.image_layout.dims.dims, in_place=False)
 
     def put_channel_at(self, idx=1, in_place: bool = False):
         out = in_place_fct(self, in_place)
@@ -433,7 +528,7 @@ class ImageTensor(Tensor):
         :param dims: List of new dimension order (length = 4)
         :return: ImageTensor or Nothing
         """
-        if isinstance(dims, int):
+        if isinstance(dims, int) or dims in ['b', 'c', 'h', 'w', 'batch', 'channels', 'height', 'width']:
             assert len(args) + 1 == 4, "4 indexes are needed for permutation"
             dims = [dims, *args]
         elif isinstance(dims, Iterable):
@@ -510,7 +605,7 @@ class ImageTensor(Tensor):
             out = self.permute(['b', 'h', 'w', 'c']).to_numpy(datatype=datatype)[..., [2, 1, 0, 3]].squeeze()
         else:
             out = self.permute(['b', 'h', 'w', 'c']).to_numpy(datatype=datatype).squeeze()
-        return out
+        return np.ascontiguousarray(out)
 
     def to_numpy(self, datatype=None):
         """
@@ -528,18 +623,18 @@ class ImageTensor(Tensor):
                 datatype = np.float64
         if datatype == np.uint8:
             if self.min() < 0 or self.max() > 255:
-                out = (self.normalize() * 255).to(torch.uint8)
+                out = (self.normalize().to_tensor() * 255).to(torch.uint8)
             elif self.max() <= 1:
                 out = (self.to_tensor() * 255).to(torch.uint8)
             else:
-                out = self.to(torch.uint8)
+                out = self.to_tensor().to(torch.uint8)
         elif datatype == np.uint16:
             if self.min() < 0 or self.max() > 65535:
                 out = (self.normalize().to_tensor() * 65535).to(torch.uint16)
             elif self.max() <= 1:
                 out = (self.to_tensor() * 65535).to(torch.uint16)
             else:
-                out = self.to(torch.uint16)
+                out = self.to_tensor().to(torch.uint16)
         else:
             out = self.to_tensor()
         if self.requires_grad:
@@ -548,12 +643,13 @@ class ImageTensor(Tensor):
             numpy_array = np.ascontiguousarray(Tensor.numpy(out.cpu()), dtype=datatype)
         return numpy_array
 
-    def to_tensor(self, in_place=False, **kwargs):
+    def to_tensor(self):
         """
         Remove all attributes to keep only the data as a torch tensor.
         :return: Tensor
         """
-        out = torch.Tensor(self.data)
+        with _C.DisableTorchFunctionSubclass():
+            out = torch.Tensor(self.data)
         return out
 
     # -------  Data inspection and storage methods  ---------------------------- #
@@ -622,26 +718,6 @@ class ImageTensor(Tensor):
     def save(self, path, name=None, ext=None, keep_colorspace=False, **kwargs):
         encod = Encoder(self.depth, self.modality, self.batched)
         encod(self, path, name=name, keep_colorspace=keep_colorspace)
-        # if (self.depth > 16 or self.batched) and ext != 'tiff':
-        #     ext_s = 'tiff'
-        #     if ext is not None:
-        #         warnings.warn(f'The saving extension have been modified to from {ext} to tiff')
-        # elif ext.upper() in ['PNG', 'JPEG', 'TIFF']:
-        #     ext_s = ext.lower()
-        # else:
-        #     ext_s = 'png'
-        # name = self.name + f'.{ext_s}' if name is None else name
-        # if not keep_colorspace:
-        #     if self.colorspace in ['HSV', 'LAB', 'XYZ', 'CYMK']:
-        #         im = self.RGB()
-        # if not os.path.exists(path):
-        #     os.makedirs(path, exist_ok=True)
-        # if self.batched:
-        #     if not cv.imwritemulti(path + f'/{name}', self.to_opencv()):
-        #         raise Exception("Could not write image")
-        # else:
-        #     if not cv.imwrite(path + f'/{name}', self.to_opencv()):
-        #         raise Exception("Could not write image")
 
     # ---------------- Properties -------------------------------- #
 
@@ -847,20 +923,26 @@ class ImageTensor(Tensor):
         im.colorspace = 'XYZ'
         return im
 
-    def BINARY(self, threshold=0.5):
+    def BINARY(self, threshold=0.5, method='gt'):
         """
         Implementation equivalent at the attribute setting : im.colorspace = '1' but create a new ImageTensor
         """
-        im = self.clone()
+        methods = {'lt': torch.lt, 'le': torch.le,
+                   'eq': torch.eq, 'ne': torch.ne,
+                   'ge': torch.gt, 'gt': torch.gt}
+        func = methods[method]
+        im = ImageTensor(self)
+        im.pass_attr(self)
         layers = im.layers_name
         im.reset_layers_order(in_place=True)
         if isinstance(threshold, Tensor) and len(threshold.shape) == 2:
             batch = im.batch_size
             assert threshold.shape == im.image_size
             threshold = threshold.repeat([batch, 1, 1, 1])
-        im.data = im > threshold
-        im.permute(layers, in_place=True)
+        with _C.DisableTorchFunctionSubclass():
+            im.data = func(im, threshold)
         im.image_layout.update(colorspace='BINARY', bit_depth=1)
+        im.permute(layers, in_place=True)
         return im
 
 
@@ -886,10 +968,11 @@ class DepthTensor(ImageTensor):
                 device: torch.device = None,
                 batched=False,
                 scaled=False,
+                permute_image=False,
                 **kwargs):
         inp_str = isinstance(inp, str)
         inp = super().__new__(cls, inp, device=device, batched=batched, name=name, modality='Depth',
-                              channels_name=['Depth'])
+                              channels_name=['Depth'], normalize=False, permute_image=permute_image)
         assert inp.channel_num == 1, 'Depth Tensor must have at most one channel'
         if not inp_str:
             inp.depth = 16
@@ -950,6 +1033,31 @@ class DepthTensor(ImageTensor):
         new = self.__class__(self, name=self.name, scaled=self.scaled, batched=self.batched, device=self.device)
         return new
 
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        # print(f"Calling '{func.__name__}' for Subclass")
+        # res = super().__torch_function__(func, types, args=args, kwargs=kwargs)
+        if kwargs is None:
+            kwargs = {}
+        with _C.DisableTorchFunctionSubclass():
+            res = func(*args, **kwargs)
+            if func in get_default_nowrap_functions():
+                return res
+            elif res.__class__ is not Tensor:
+                return res
+            else:
+                arg = find_class(args, cls)
+                if arg is not None:
+                    if arg.shape == res.shape and arg.dtype == res.dtype:
+                        new = cls(res)
+                        new.name = arg.name
+                        new.permute(arg.layers_name, in_place=True)
+                        return new
+                    else:
+                        return res
+                else:
+                    return res
+
     def save(self, path, name=None, save_image=False, **kwargs):
         encod = Encoder(self.depth, self.modality, self.batched, ext='tiff')
         if save_image:
@@ -969,31 +1077,21 @@ class DepthTensor(ImageTensor):
         if not in_place:
             return out
 
-    def show(self, num=None, cmap='inferno', roi: list = None, point: Union[list, Tensor] = None, true_value=True):
+    def show(self, num=None, cmap='jet', roi: list = None, point: Union[list, Tensor] = None, true_value=False):
+        """
+        :param num: Number of images to show
+        :param cmap: Colormap to use
+        :param roi: Region of Interest
+        :param point: Point to show
+        """
         if true_value and self.max_value <= 255:
-            im = ImageTensor(self.to(torch.uint8))
+            im = ImageTensor(self.unscale(), normalize=False)
             im.depth = 8
             im.show(num=num, cmap=f'{cmap}', roi=roi, point=point)
 
         else:
-            im = ImageTensor(self.inverse_depth())
+            im = ImageTensor(self.inverse_depth(remove_zeros=True))
             im.show(num=num, cmap=f'{cmap}', roi=roi, point=point)
-
-    # def normalize(self, return_minmax=False, keep_abs_max=False, in_place=False, **kwargs) -> DepthTensor or None:
-    #     out = in_place_fct(self, in_place)
-    #     if keep_abs_max:
-    #         a = torch.abs(out.to_tensor())
-    #         m = a.min()
-    #         M = a.max()
-    #         out.data = (a - m) / (M - m)
-    #     else:
-    #         m = out.min()
-    #         M = out.max()
-    #         out.data = (out.to_tensor() - m) / (M - m)
-    #     if return_minmax:
-    #         return out, m, M
-    #     else:
-    #         return out
 
     def inverse_depth(self, remove_zeros=False, remove_max=True, factor=1, in_place=False, **kwargs):
         out = in_place_fct(self, in_place)

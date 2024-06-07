@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from matplotlib import colormaps as cm
 from torch import Tensor
-from utils import wrap_colorspace
+from .utils import wrap_colorspace
 
 __all__ = ['RGBA_to_GRAY', 'RGBA_to_RGB', 'RGBA_to_CMYK', 'RGBA_to_HSV',  # RGBA
            'RGB_to_GRAY', 'GRAY_to_RGB',  # GRAY
@@ -185,7 +185,7 @@ class RGB_to_GRAY:
             assert luma in self.luma
             im.data = torch.sum(torch.mul(im.permute(0, 2, 3, 1), self.luma[luma]), dim=-1).unsqueeze(1)
         else:
-            im.data = torch.sum(im / 3, dim=1).unsqueeze(1)
+            im.data = torch.sum(im.to_tensor() / 3, dim=1, keepdim=True)
         im.permute(layers, in_place=True)
         im.image_layout.update(colorspace='GRAY', num_ch=1, modality=0, colomap=None)
 

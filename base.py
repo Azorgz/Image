@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from warnings import warn
@@ -126,17 +127,31 @@ class Dims:
     height: int = 2
     width: int = 3
 
+    def __init__(self, *args, batch: int = 0, channels: int = 1, height: int = 2, width: int = 3):
+        if len(args) == 4:
+            self.batch, self.channels, self.height, self.width = args
+        else:
+            self.batch, self.channels, self.height, self.width = [batch, channels, height, width]
+
     def permute(self, dims):
-        temp = np.array(self.dims)[dims]
-        self.batch, self.channels, self.height, self.width = (temp.tolist())
+        temp = np.array(dims)
+        self.batch, self.channels, self.height, self.width = [int(np.argwhere(d == temp)) for d in self.dims]
+        # for i, d in enumerate(dims):
+        #     self.pos_layer[d] = i
+        #  = np.array(self.dims)[dims].tolist()
 
     @property
     def dims(self):
         return [self.batch, self.channels, self.height, self.width]
 
+    # @property
+    # def dims(self):
+    #     temp = np.array(self.pos_layer)
+    #     return [int(np.argwhere(temp == i)) for i in range(4)]
+
     @property
     def layers(self):
-        return np.array(['batch', 'channels', 'height', 'width'])[self.dims].tolist()
+        return np.array(['batch', 'channels', 'height', 'width'])[np.argsort(self.dims)].tolist()
 
 
 @dataclass()
@@ -187,10 +202,11 @@ class ImageLayout:
                  channel: Channel,
                  pixel_format: PixelFormat,
                  batch: Batch,
+                 dims: Dims = None,
                  pad: Pad = None,
                  colormap: str = None,
-                 channel_names: list = None,
-                 dims: list = None):
+                 channel_names: list = None
+                 ):
         self.modality = modality
         self.colormap = colormap
         self.image_size = image_size
@@ -202,7 +218,7 @@ class ImageLayout:
         else:
             self.pad = Pad
         if dims is not None:
-            self.dims = Dims(*dims)
+            self.dims = dims
         else:
             self.dims = Dims()
         if channel_names is not None:
@@ -256,7 +272,7 @@ class ImageLayout:
                            channel_names=self.channel_names,
                            pad=Pad(self.pad.left, self.pad.right, self.pad.top, self.pad.bottom),
                            batch=Batch(self.batch.batched, self.batch.batch_size),
-                           dims=self.dims.dims,
+                           dims=Dims(*self.dims.dims),
                            colormap=self.colormap)
 
     def _CHECK_MODALITY_VALIDITY(self):
@@ -269,7 +285,7 @@ class ImageLayout:
 
     def _CHECK_LAYERS_VALIDITY(self):
         assert self.dims.batch != self.dims.channels != self.dims.height != self.dims.width
-        assert int(np.argwhere(np.array(self.dims.dims) == 1)) == self.channel.pos
+        assert self.dims.channels == self.channel.pos
 
     def _CHECK_COLOR_VALIDITY(self):
         cs = self.pixel_format.colorspace.name
@@ -381,7 +397,9 @@ class ImageLayout:
 
     @property
     def shape(self):
+        size = np.array(self.dims.dims)
+        sorted_idx = np.argsort(size)
         return torch.Size(np.array([self.batch.batch_size,
                                     self.channel.num_ch,
                                     self.image_size.height,
-                                    self.image_size.width])[self.dims.dims])
+                                    self.image_size.width])[sorted_idx])
