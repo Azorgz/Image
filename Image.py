@@ -63,7 +63,7 @@ class ImageTensor(Tensor):
                 colorspace: str = None,
                 channel_names=None,
                 batched=False,
-                permute_image=False,
+                permute_image=True,
                 normalize=True,
                 **kwargs):
         # Input array is a path to an image OR an already formed ndarray instance
@@ -73,6 +73,8 @@ class ImageTensor(Tensor):
             inp, batched = d.value, d.batched
             permute_image = True  # The image has been created from a path
         if isinstance(inp, ImageTensor) or isinstance(inp, DepthTensor):
+            if isinstance(inp, DepthTensor):
+                normalize = False
             inp_ = inp.to_tensor()
             image_layout = inp.image_layout.clone()
             name = str(inp.name)
@@ -392,7 +394,7 @@ class ImageTensor(Tensor):
             return out
 
     def hstack(self, *args, in_place=False, **kwargs):
-        assert all([im.image_layout == self.image_layout for im in args])
+        assert all([im.image_layout.image_size == self.image_layout.image_size for im in args])
         layers = self.layers_name
         out = in_place_fct(self, in_place).permute(['h', 'w', 'b', 'c'])
         stack = [out.to_tensor()]
@@ -406,7 +408,7 @@ class ImageTensor(Tensor):
             return out
 
     def vstack(self, *args, in_place=False, **kwargs):
-        assert all([im.image_layout == self.image_layout for im in args])
+        assert all([im.image_layout.image_size == self.image_layout.image_size for im in args])
         layers = self.layers_name
         out = in_place_fct(self, in_place).permute(['h', 'w', 'b', 'c'])
         stack = [out.to_tensor()]
@@ -655,6 +657,7 @@ class ImageTensor(Tensor):
     # -------  Data inspection and storage methods  ---------------------------- #
     @torch.no_grad()
     def show(self, num=None, cmap='gray', roi: list = None, point: Union[list, Tensor] = None):
+        matplotlib.use('TkAgg')
         im = self.permute(['b', 'h', 'w', 'c'], in_place=False)
         # If the ImageTensor is multimodal or batched then we will plot a matrix of images for each mod / image
         if im.modality == 'Multimodal' or im.batch_size > 1:
@@ -663,8 +666,8 @@ class ImageTensor(Tensor):
         else:
             if num is None:
                 num = self.name
-            if self.channel_names is not None:
-                num += ' / ' + self.channel_names[0]
+            # if self.channel_names is not None and self.channel_names != []:
+            #     num += ' / ' + self.channel_names[0]
             fig, ax = plt.subplots(ncols=1, nrows=1, num=num, squeeze=False)
             if im.modality == 'Any' and im.colormap is None:
                 im = im.RGB('gray')
@@ -889,6 +892,7 @@ class ImageTensor(Tensor):
         """
         im = self.clone()
         im.colorspace = 'GRAY', {}
+        im.channel_names = ['Gray']
         return im
 
     def CMYK(self, **kwargs):
@@ -968,7 +972,7 @@ class DepthTensor(ImageTensor):
                 device: torch.device = None,
                 batched=False,
                 scaled=False,
-                permute_image=False,
+                permute_image=True,
                 **kwargs):
         inp_str = isinstance(inp, str)
         inp = super().__new__(cls, inp, device=device, batched=batched, name=name, modality='Depth',
@@ -1078,6 +1082,7 @@ class DepthTensor(ImageTensor):
             return out
 
     def show(self, num=None, cmap='jet', roi: list = None, point: Union[list, Tensor] = None, true_value=False):
+        matplotlib.use('TkAgg')
         """
         :param num: Number of images to show
         :param cmap: Colormap to use
